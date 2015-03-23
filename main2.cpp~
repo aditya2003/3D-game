@@ -1,0 +1,669 @@
+/* Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above notice and this permission notice shall be included in all copies
+ * or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+/* File for "Terrain" lesson of the OpenGL tutorial on
+ * www.videotutorialsrock.com
+ */
+
+
+#include <cmath>
+#include <iostream>
+#include <stdlib.h>
+#include <vector>
+#ifdef __APPLE__
+#include <OpenGL/OpenGL.h>
+#include <GLUT/glut.h>
+#else
+#include <GL/glut.h>
+#endif
+#include "glm.cpp"
+#include "imageloader.cpp"
+#include "vec3f.cpp"
+
+#define PI 3.141592653589
+#define DEG2RAD(deg) (deg * PI / 180)
+
+using namespace std;
+GLdouble projection[16], modelview[16];
+
+struct Ball {
+	
+	float pos[3]; //Position
+	float r; //Radius
+	float color[3];
+	int marked;
+};
+vector<Ball*> _balls ;
+typedef struct _cell {
+    int id;
+    int x, y;
+    float min, max;
+    float value;
+    float step;
+    char* info;
+    char* format;
+} cell;
+
+
+
+int current_view=0;
+
+cell translation[3] = {
+    { 1, 120, 40, -5.0, 5.0, 0.0, 0.01,
+        "Specifies X coordinate of translation vector.", "%.2f" },
+    { 2, 180, 40, -5.0, 5.0, 0.0, 0.01,
+    "Specifies Y coordinate of translation vector.", "%.2f" },
+    { 3, 240, 40, -5.0, 5.0, 0.0, 0.01,
+    "Specifies Z coordinate of translation vector.", "%.2f" },
+};
+
+cell rotation[4] = {
+    { 4, 120, 80, -360.0, 360.0, 0.0, 1.0,
+        "Specifies angle of rotation, in degrees.", "%.1f" },
+    { 5, 180, 80, -1.0, 1.0, 0.0, 0.01,
+    "Specifies X coordinate of vector to rotate about.", "%.2f" },
+    { 6, 240, 80, -1.0, 1.0, 1.0, 0.01,
+    "Specifies Y coordinate of vector to rotate about.", "%.2f" },
+    { 7, 300, 80, -1.0, 1.0, 0.0, 0.01,
+    "Specifies Z coordinate of vector to rotate about.", "%.2f" },
+};
+
+cell scale[3] = {
+    {  8, 120, 120, -5.0, 5.0, 1.0, 0.01,
+        "Specifies scale factor along X axis.", "%.2f" },
+    {  9, 180, 120, -5.0, 5.0, 1.0, 0.01,
+    "Specifies scale factor along Y axis.", "%.2f" },
+    { 10, 240, 120, -5.0, 5.0, 1.0, 0.01,
+    "Specifies scale factor along Z axis.", "%.2f" },
+};
+
+
+
+
+GLfloat eye[3] = { 0.0, 0.0, 2.0 };
+GLfloat at[3]  = { 0.0, 0.0, 0.0 };
+GLfloat up[3]  = { 0.0, 1.0, 0.0 };
+
+
+
+
+//Represents a terrain, by storing a set of heights and normals at 2D locations
+class Terrain {
+	private:
+		int w; //Width
+		int l; //Length
+		float** hs; //Heights
+		Vec3f** normals;
+		bool computedNormals; //Whether normals is up-to-date
+	public:
+		Terrain(int w2, int l2) {
+			w = w2;
+			l = l2;
+			
+			hs = new float*[l];
+			for(int i = 0; i < l; i++) {
+				hs[i] = new float[w];
+			}
+			
+			normals = new Vec3f*[l];
+			for(int i = 0; i < l; i++) {
+				normals[i] = new Vec3f[w];
+			}
+			
+			computedNormals = false;
+		}
+		
+		~Terrain() {
+			for(int i = 0; i < l; i++) {
+				delete[] hs[i];
+			}
+			delete[] hs;
+			
+			for(int i = 0; i < l; i++) {
+				delete[] normals[i];
+			}
+			delete[] normals;
+		}
+		
+		int width() {
+			return w;
+		}
+		
+		int length() {
+			return l;
+		}
+		
+		//Sets the height at (x, z) to y
+		void setHeight(int x, int z, float y) {
+			hs[z][x] = y;
+			computedNormals = false;
+		}
+		
+		//Returns the height at (x, z)
+		float getHeight(int x, int z) {
+			return hs[z][x];
+		}
+		
+		//Computes the normals, if they haven't been computed yet
+		void computeNormals() {
+			if (computedNormals) {
+				return;
+			}
+			
+			//Compute the rough version of the normals
+			Vec3f** normals2 = new Vec3f*[l];
+			for(int i = 0; i < l; i++) {
+				normals2[i] = new Vec3f[w];
+			}
+			
+			for(int z = 0; z < l; z++) {
+				for(int x = 0; x < w; x++) {
+					Vec3f sum(0.0f, 0.0f, 0.0f);
+					
+					Vec3f out;
+					if (z > 0) {
+						out = Vec3f(0.0f, hs[z - 1][x] - hs[z][x], -1.0f);
+					}
+					Vec3f in;
+					if (z < l - 1) {
+						in = Vec3f(0.0f, hs[z + 1][x] - hs[z][x], 1.0f);
+					}
+					Vec3f left;
+					if (x > 0) {
+						left = Vec3f(-1.0f, hs[z][x - 1] - hs[z][x], 0.0f);
+					}
+					Vec3f right;
+					if (x < w - 1) {
+						right = Vec3f(1.0f, hs[z][x + 1] - hs[z][x], 0.0f);
+					}
+					
+					if (x > 0 && z > 0) {
+						sum += out.cross(left).normalize();
+					}
+					if (x > 0 && z < l - 1) {
+						sum += left.cross(in).normalize();
+					}
+					if (x < w - 1 && z < l - 1) {
+						sum += in.cross(right).normalize();
+					}
+					if (x < w - 1 && z > 0) {
+						sum += right.cross(out).normalize();
+					}
+					
+					normals2[z][x] = sum;
+				}
+			}
+			
+			//Smooth out the normals
+			const float FALLOUT_RATIO = 0.5f;
+			for(int z = 0; z < l; z++) {
+				for(int x = 0; x < w; x++) {
+					Vec3f sum = normals2[z][x];
+					
+					if (x > 0) {
+						sum += normals2[z][x - 1] * FALLOUT_RATIO;
+					}
+					if (x < w - 1) {
+						sum += normals2[z][x + 1] * FALLOUT_RATIO;
+					}
+					if (z > 0) {
+						sum += normals2[z - 1][x] * FALLOUT_RATIO;
+					}
+					if (z < l - 1) {
+						sum += normals2[z + 1][x] * FALLOUT_RATIO;
+					}
+					
+					if (sum.magnitude() == 0) {
+						sum = Vec3f(0.0f, 1.0f, 0.0f);
+					}
+					normals[z][x] = sum;
+				}
+			}
+			
+			for(int i = 0; i < l; i++) {
+				delete[] normals2[i];
+			}
+			delete[] normals2;
+			
+			computedNormals = true;
+		}
+		
+		//Returns the normal at (x, z)
+		Vec3f getNormal(int x, int z) {
+			if (!computedNormals) {
+				computeNormals();
+			}
+			return normals[z][x];
+		}
+};
+Terrain* _terrain;
+void create_ball()
+{
+	for(int z = 0; z < _terrain->length() - 1; z++) {
+		
+		for(int x = 0; x < _terrain->width(); x++) {
+
+//			x, _terrain->getHeight(x, z), z 
+
+
+		if ((rand() % 100)==1)
+		{
+
+			Ball* ball = new Ball();
+				
+				ball->pos[0] = x;
+				ball->pos[1] =_terrain->getHeight(x, z) + 10;
+				ball->pos[2] = z;
+				
+				ball->r = 1.0f;
+				ball->marked=0;
+				int color_code = rand() % 3;
+				if (color_code==0)//red
+				{
+				ball->color[0] = 1.0f;
+				ball->color[1] = 0.0f;
+				ball->color[2] = 0.0f;
+				}
+				else if (color_code==1) // green
+				{
+				ball->color[0] = 0.0f;
+				ball->color[1] = 1.0f;
+				ball->color[2] = 0.0f;	
+				}
+				else
+				{
+				ball->color[0] = 0.0f;
+				ball->color[1] = 0.0f;
+				ball->color[2] = 0.0f;	
+				}
+
+
+				_balls.push_back(ball);
+
+
+
+		}	
+		
+
+		}
+
+	}
+
+
+
+
+}
+
+//Loads a terrain from a heightmap.  The heights of the terrain range from
+//-height / 2 to height / 2.
+Terrain* loadTerrain(const char* filename, float height) {
+	Image* image = loadBMP(filename);
+	Terrain* t = new Terrain(image->width, image->height);
+	for(int y = 0; y < image->height; y++) {
+		for(int x = 0; x < image->width; x++) {
+			unsigned char color =
+				(unsigned char)image->pixels[3 * (y * image->width + x)];
+			float h = height * ((color / 255.0f) - 0.5f);
+
+			if(x==0 && y==0)
+			{
+			translation[0].value=x;
+			translation[2].value=y;
+
+}
+
+			t->setHeight(x, y, h);
+
+
+		}
+	}
+	
+	delete image;
+	t->computeNormals();
+	return t;
+}
+
+float _angle = 60.0f;
+
+
+void cleanup() {
+	delete _terrain;
+}
+
+void change_camera()
+{
+if(current_view==0)
+{
+			eye[0] =  translation[0].value;
+ 			 eye[1] = translation[1].value + 1;
+			 eye[2] =  translation[2].value;
+			 at[0]  =  translation[0].value + 4*sin(DEG2RAD(rotation[0].value));
+			 at[1]  =    translation[1].value + 0;
+			 at[2]  =  (translation[2].value +  4*cos(DEG2RAD(rotation[0].value)));
+}
+else if (current_view==1)
+{
+	eye[0] =  translation[0].value + 8*sin(DEG2RAD(rotation[0].value));
+ 			 eye[1] = translation[1].value - 3.8;
+			 eye[2] =  translation[2].value + 8*cos(DEG2RAD(rotation[0].value));
+			 at[0]  =  translation[0].value + 10*sin(DEG2RAD(rotation[0].value));
+			 at[1]  =    translation[1].value - 3.8;
+			 at[2]  =  (translation[2].value +  10*cos(DEG2RAD(rotation[0].value)));
+
+}
+else if (current_view==2)
+{
+eye[0] =  translation[0].value + 9*sin(DEG2RAD(rotation[0].value));
+ 			 eye[1] = translation[1].value - 4.5;
+			 eye[2] =  translation[2].value + 9*cos(DEG2RAD(rotation[0].value));
+			 at[0]  =  translation[0].value + 10*sin(DEG2RAD(rotation[0].value));
+			 at[1]  =    translation[1].value - 4.5;
+			 at[2]  =  (translation[2].value +  10*cos(DEG2RAD(rotation[0].value)));
+
+}
+
+
+
+}
+
+
+
+
+void handleKeypress(unsigned char key, int x, int y) {
+	switch (key) {
+
+		case 100:
+			current_view =0;
+			change_camera();
+			
+
+ 
+			break;
+
+
+		case 101:
+
+			current_view =1;
+			change_camera();
+			break;
+
+		case 102:
+			current_view=2;
+			change_camera();		
+			break;
+
+			
+
+
+
+
+		case 27: //Escape key
+			cleanup();
+			exit(0);
+	}
+}
+
+
+void handleKeypress2(int key, int x, int y) {
+
+    if (key == GLUT_KEY_UP)
+	{
+		 translation[2].value += 0.1 * cos(DEG2RAD(rotation[0].value));
+		 translation[0].value += 0.1 * sin(DEG2RAD(rotation[0].value));
+		change_camera();        	
+	}
+if (key == GLUT_KEY_DOWN)
+	{
+		 translation[2].value -= 0.1 * cos(DEG2RAD(rotation[0].value));
+		 translation[0].value -= 0.1 * sin(DEG2RAD(rotation[0].value));
+change_camera();
+       	
+	}
+    if (key == GLUT_KEY_RIGHT)
+        {
+
+		
+		rotation[0].value-=5;
+		if(rotation[0].value<0)
+			{
+							rotation[0].value = 360 + rotation[0].value;
+			}
+		rotation[1].value = 0.0;
+	        rotation[2].value = 1.0;
+	        rotation[3].value = 0.0;
+		change_camera();
+
+	}
+if (key == GLUT_KEY_LEFT)
+        {
+
+		rotation[0].value+=5;
+		if(rotation[0].value>360)
+			{
+				rotation[0].value =  rotation[0].value - 360;
+			}
+		rotation[1].value = 0.0;
+	        rotation[2].value = 1.0;
+	        rotation[3].value = 0.0;
+		change_camera();
+	}
+
+}
+
+
+void initRendering() {
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_COLOR_MATERIAL);
+	glEnable(GL_LIGHTING);
+	glEnable(GL_LIGHT0);
+	glEnable(GL_NORMALIZE);
+	glShadeModel(GL_SMOOTH);
+}
+
+void handleResize(int width, int height) {
+/*	glViewport(0, 0, w, h);
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(45.0, (double)w / (double)h, 1.0, 200.0);*/
+
+glViewport(0, 0, width, height);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluPerspective(45.0, (float)width/height, 1.0, 200.0);
+    glGetDoublev(GL_PROJECTION_MATRIX, projection);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+  // gluLookAt(eye[0], eye[1], eye[2], at[0], at[1], at[2], up[0], up[1],up[2]);
+   
+    /*glTranslatef(translation[0].value, translation[1].value,
+            translation[2].value);
+        glRotatef(rotation[0].value, rotation[1].value, 
+    rotation[2].value, rotation[3].value);
+    
+    glScalef(scale[0].value, scale[1].value, scale[2].value);*/
+    glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+    glClearColor(0.2, 0.2, 0.2, 0.0);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+
+
+}
+
+GLMmodel* pmodel = NULL;
+void
+drawmodel(void)
+{
+    if (!pmodel) {
+        pmodel = glmReadOBJ("Bike.obj");
+        if (!pmodel) exit(0);
+        glmUnitize(pmodel);
+        glmFacetNormals(pmodel);
+        glmVertexNormals(pmodel, 90.0);
+    }
+    
+    glmDraw(pmodel, GLM_SMOOTH | GLM_MATERIAL);
+}
+int temp=0;
+void drawScene() {
+
+
+if(temp==0)
+{create_ball();
+temp=1;
+}
+
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	
+	glMatrixMode(GL_MODELVIEW);
+
+
+glTranslatef(0.0f, 0.0f, -10.0f);
+glRotatef(30.0f, 1.0f, 0.0f, 0.0f);
+	gluLookAt(eye[0], eye[1], eye[2], at[0], at[1], at[2], up[0], up[1],up[2]);		
+
+
+
+
+	glColor3f(0.3f, 0.9f, 0.0f);	
+	GLfloat ambientColor[] = {0.4f, 0.4f, 0.4f, 1.0f};
+	glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambientColor);
+	
+	GLfloat lightColor0[] = {0.6f, 0.6f, 0.6f, 1.0f};
+	GLfloat lightPos0[] = {-0.5f, 0.8f, 0.1f, 0.0f};
+	glLightfv(GL_LIGHT0, GL_DIFFUSE, lightColor0);
+	glLightfv(GL_LIGHT0, GL_POSITION, lightPos0);
+	
+	float scale = 5.0f / max(_terrain->width() - 1, _terrain->length() - 1);
+//	glScalef(scale, scale, scale);
+	glTranslatef(-(float)(_terrain->width() - 1) / 2,
+				 0.0f,
+				 -(float)(_terrain->length() - 1) / 2);
+	
+	glColor3f(0.3f, 0.9f, 0.0f);
+	for(int z = 0; z < _terrain->length() - 1; z++) {
+if(z < (_terrain->length() - 1)/2)
+glColor3f(0.3f, 0.9f, 0.0f);
+else if(z < 2*(_terrain->length() - 1)/3)
+glColor4f(0.0f, 0.0f, 0.7f,0.5f);
+else
+glColor3f(0.3f, 0.9f, 0.0f);
+		//Makes OpenGL draw a triangle at every three consecutive vertices
+		glBegin(GL_TRIANGLE_STRIP);
+		for(int x = 0; x < _terrain->width(); x++) {
+			Vec3f normal = _terrain->getNormal(x, z);
+			glNormal3f(normal[0], normal[1], normal[2]);
+			glVertex3f(x, _terrain->getHeight(x, z), z);
+			normal = _terrain->getNormal(x, z + 1);
+			glNormal3f(normal[0], normal[1], normal[2]);
+			glVertex3f(x, _terrain->getHeight(x, z + 1), z + 1);
+		
+
+		}
+		glEnd();
+	}
+/*
+glPushMatrix();   
+
+
+translation[1].value = _terrain->getHeight(int(translation[0].value) ,int(translation[2].value))  ; 
+
+
+
+        glTranslatef(translation[0].value,translation[1].value ,
+            translation[2].value);
+        glRotatef(rotation[0].value, rotation[1].value, 
+            rotation[2].value, rotation[3].value);
+    
+    //glScalef(scale[0].value, scale[1].value, scale[2].value);
+
+	glColor3f(1.0f, 1.0f, 1.0f);	
+	drawmodel();
+glPopMatrix();
+*/
+for(unsigned int i = 0; i < _balls.size(); i++) {
+		Ball* ball = _balls[i];
+		glPushMatrix();
+		glTranslatef(ball->pos[0], ball->pos[1], ball->pos[2]);
+		if(ball->color[0]==0 && ball->color[1]==0 && ball->color[2]==0)
+			glColor3f(0.0, 0.0, 0.0);
+		else if(ball->color[1]==1)
+						glColor3f(1.0, 0.0, 0.0);
+		else 			glColor3f(1.0, 1.0, 0.0);
+		glutSolidSphere(ball->r,
+                    50,50 );
+				glPopMatrix();
+
+	}
+
+
+	
+	glutSwapBuffers();
+}
+
+void update(int value) {
+
+	glutPostRedisplay();
+
+	glutTimerFunc(25, update, 0);
+}
+
+
+int main(int argc, char** argv) {
+
+
+
+
+ change_camera();
+
+
+	glutInit(&argc, argv);
+	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
+	glutInitWindowSize(400, 400);
+	
+	glutCreateWindow("Terrain - videotutorialsrock.com");
+	initRendering();
+	
+	_terrain = loadTerrain("heightmap.bmp", 20);
+
+	glutDisplayFunc(drawScene);
+	glutKeyboardFunc(handleKeypress);
+	glutSpecialFunc(handleKeypress2);
+	glutReshapeFunc(handleResize);
+	
+
+
+	glutTimerFunc(1000, update, 0);
+	//glutTimerFunc(1000, update2, 0);
+
+
+	glutMainLoop();
+	
+	
+
+	return 0;
+}
+
+
+
+
+
+
+
+
+

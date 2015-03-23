@@ -1,0 +1,23 @@
+201225032_
+
+Implemented -
+Terrain
+Bike
+Fossils which can be collected
+Bike climbing on hill
+Projectile Motion when falling from top
+Camera Angles 
+a)Driver View
+b)Wheel View(front mudguard view)
+c)OverHead View
+d)Side View
+e)Follow Cam
+Physics of bike movement -
+Pitch
+Yaw
+Acceleration / retardation of bike
+Influence of tilt on accelaration due to centrifugal force tilt(by max 45 degree)(roll)
+Time taken until Game over
+Calculation of Score
+	   
+
